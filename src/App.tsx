@@ -9,7 +9,8 @@ import { AdminRoutes } from "./routes/AdminRoutes";
 const App = () => (
   <ThemeProvider theme={theme}>
     <GlobalStyles />
-    <BrowserRouter  basename={import.meta.env.BASE_URL}>
+
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
         <LibraryProvider>
           <AdminRoutes />
