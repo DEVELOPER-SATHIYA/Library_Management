@@ -4,7 +4,8 @@ import { theme } from "./styles/theme";
 import { GlobalStyles } from "./styles/GlobalStyles";
 import { LibraryProvider } from "./context/LibraryContext";
 import { ToastProvider } from "./context/ToastContext";
-import { AdminRoutes } from "./routes/AdminRoutes";
+import { AuthProvider } from "./context/AuthContext";
+import { AppRoutes } from "./routes/AppRoutes";
 
 const App = () => (
   <ThemeProvider theme={theme}>
@@ -12,9 +13,11 @@ const App = () => (
 
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
-        <LibraryProvider>
-          <AdminRoutes />
-        </LibraryProvider>
+        <AuthProvider>
+          <LibraryProvider>
+            <AppRoutes />
+          </LibraryProvider>
+        </AuthProvider>
       </ToastProvider>
     </BrowserRouter>
   </ThemeProvider>

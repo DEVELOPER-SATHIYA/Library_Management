@@ -14,12 +14,12 @@ export const NAV_ITEMS: NavItemConfig[] = [
   { path: "/issued-books", label: "Issued Books", description: "Track borrowed copies", icon: "issued" },
   { path: "/register-book", label: "Register New Book", description: "Add books to the catalogue", icon: "register" },
   { path: "/issue-return", label: "Issue / Return Books", description: "Manage borrowing transactions", icon: "swap" },
-  { path: "/students", label: "Students", description: "Reserved for future integration", icon: "students", comingSoon: true },
-  { path: "/settings", label: "Settings", description: "Admin preferences", icon: "settings", comingSoon: true },
+  // { path: "/students", label: "Students", description: "Reserved for future integration", icon: "students", comingSoon: true },
+  // { path: "/settings", label: "Settings", description: "Admin preferences", icon: "settings", comingSoon: true },
 ];
 
 /** Header titles per route. */
 export const titleFor = (pathname: string): { title: string; subtitle: string } => {
   const item = NAV_ITEMS.find((n) => pathname.startsWith(n.path));
-  return item ? { title: item.label, subtitle: item.description } : { title: "Library Admin", subtitle: "" };
+  return item ? { title: item.label, subtitle: item.description } : { title: "படிப்பகம்", subtitle: "" };
 };

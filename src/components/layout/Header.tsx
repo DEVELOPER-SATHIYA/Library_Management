@@ -1,13 +1,17 @@
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import { useLibrary } from "../../context/LibraryContext";
 import { loanState } from "../../services/issue.service";
 import { Icon } from "../common/Icon";
+import { IconButton } from "../../styles/ui";
 import { AdminChip, BellLink, HeaderActions, HeaderRoot, HeaderTitle, MenuButton } from "./layout.styles";
 import { titleFor } from "./navItems";
 
 export const Header = ({ onMenu }: { onMenu: () => void }) => {
   const { pathname } = useLocation();
   const { issues, today } = useLibrary();
+  const { logout } = useAuth();
+  const navigate = useNavigate();
   const overdue = issues.filter((i) => loanState(i, today) === "overdue").length;
   const { title, subtitle } = titleFor(pathname);
 
@@ -36,6 +40,17 @@ export const Header = ({ onMenu }: { onMenu: () => void }) => {
             <small>Librarian</small>
           </span>
         </AdminChip>
+        <IconButton
+          type="button"
+          title="Log out"
+          aria-label="Log out"
+          onClick={() => {
+            navigate("/");
+            logout();
+          }}
+        >
+          <Icon name="logout" />
+        </IconButton>
       </HeaderActions>
     </HeaderRoot>
   );

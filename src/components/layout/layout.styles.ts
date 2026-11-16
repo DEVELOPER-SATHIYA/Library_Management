@@ -72,8 +72,8 @@ export const Brand = styled.div`
     border-radius: 10px;
     display: grid;
     place-items: center;
-    background: ${({ theme }) => theme.colors.primary};
-    color: #fff;
+    background: #fff;
+    color: #21261f;
   }
   strong { display: block; color: #fff; font-size: 15px; }
   span { font-size: 12px; color: ${({ theme }) => theme.colors.sidebarMuted}; }

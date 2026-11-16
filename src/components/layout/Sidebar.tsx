@@ -1,3 +1,4 @@
+import { AppIcon } from "../common/AppIcon";
 import { Icon } from "../common/Icon";
 import { Backdrop, Brand, NavItem, NavSection, SidebarRoot, SoonTag } from "./layout.styles";
 import { NAV_ITEMS } from "./navItems";
@@ -13,10 +14,10 @@ export const Sidebar = ({ open, onClose }: SidebarProps) => (
     <SidebarRoot $open={open} aria-label="Main navigation">
       <Brand>
         <div>
-          <Icon name="books" size={20} />
+          <AppIcon size={22} />
         </div>
         <div>
-          <strong>Library Admin</strong>
+          <strong>படிப்பகம்</strong>
           <span>Library Management System</span>
         </div>
       </Brand>

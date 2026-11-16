@@ -37,7 +37,7 @@ export const Dashboard = () => {
             </Button>
             <Button type="button" onClick={() => navigate("/issue-return")}>
               <Icon name="swap" />
-              Issue Book
+              Issue / Return Book
             </Button>
           </>
         }
