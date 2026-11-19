@@ -74,8 +74,15 @@ export const Td = styled.td<{ $align?: "left" | "right" | "center" }>`
   && { text-align: ${({ $align }) => $align ?? "left"}; }
 `;
 
-export const Tr = styled.tr<{ $highlight?: boolean }>`
+export const Tr = styled.tr<{ $highlight?: boolean; $clickable?: boolean }>`
   td { background: ${({ theme, $highlight }) => ($highlight ? theme.colors.dangerSoft + "66" : "transparent")}; }
+
+  ${({ $clickable, theme }) =>
+    $clickable &&
+    `
+    cursor: pointer;
+    &:focus-visible { outline: 2px solid ${theme.colors.primary}; outline-offset: -2px; }
+  `}
 `;
 
 export const SortHeader = styled.button<{ $active: boolean }>`

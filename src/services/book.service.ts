@@ -1,15 +1,9 @@
 /**
  * Book service — pure functions over in-memory state.
- * When a backend is added, swap these implementations for API calls
- * (e.g. `fetch("/api/books")`) while keeping the same signatures.
+ * When Supabase is connected, swap these implementations for queries
+ * while keeping the same signatures.
  */
-import type {
-  AvailabilityFilter,
-  Book,
-  BookFormErrors,
-  BookFormValues,
-  BookSortKey,
-} from "../types/book.types";
+import type { Book, BookCopy, BookFormErrors, BookFormValues } from "../types/book.types";
 import type { BookIssue } from "../types/issue.types";
 import { isValidIsbn, normalizeIsbn } from "../utils/isbn";
 import { LOW_STOCK_THRESHOLD } from "../utils/constants";
@@ -22,83 +16,112 @@ export class ServiceError extends Error {
   }
 }
 
-export const emptyBookForm = (): BookFormValues => ({
+/** Normalised text used to decide whether two records are the same title / borrower. */
+export const groupKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+const titleKey = (title: string, author: string) => `${groupKey(title)}|${groupKey(author)}`;
+
+/** Blank register form, with the Book ID pre-filled with the next free accession number. */
+export const emptyBookForm = (books: Book[]): BookFormValues => ({
+  accNo: String(nextAccNo(books)),
   title: "",
   author: "",
   isbn: "",
-  category: "",
   publisher: "",
   edition: "",
   publicationYear: "",
-  totalCopies: "1",
   shelfNumber: "",
-  coverImage: "",
+  registerPage: "",
+  price: "",
 });
 
-export const bookToForm = (b: Book): BookFormValues => ({
+export const copyToForm = (b: Book, c: BookCopy): BookFormValues => ({
+  accNo: c.accNo,
   title: b.title,
   author: b.author,
   isbn: b.isbn ?? "",
-  category: b.category,
   publisher: b.publisher ?? "",
   edition: b.edition ?? "",
   publicationYear: b.publicationYear ? String(b.publicationYear) : "",
-  totalCopies: String(b.totalCopies),
-  shelfNumber: b.shelfNumber ?? "",
-  coverImage: b.coverImage ?? "",
+  shelfNumber: c.shelf ?? b.shelfNumber ?? "",
+  registerPage: c.registerPage ?? "",
+  price: c.price ?? "",
 });
+
+const isLendable = (c: BookCopy) => !c.withdrawnReason;
+
+/** Accession numbers currently out on loan. */
+const loanedCopyIds = (bookId: string, issues: BookIssue[]) =>
+  new Set(issues.filter((i) => i.bookId === bookId && i.status === "issued").map((i) => i.bookCopyId));
 
 /** Number of copies currently out on loan for a book. */
 export const copiesOnLoan = (bookId: string, issues: BookIssue[]): number =>
   issues.filter((i) => i.bookId === bookId && i.status === "issued").length;
 
-/** availableCopies = totalCopies − active loans. */
-export const reconcileAvailability = (books: Book[], issues: BookIssue[]): Book[] =>
-  books.map((b) => ({
-    ...b,
-    availableCopies: Math.max(0, b.totalCopies - copiesOnLoan(b.id, issues)),
-  }));
+/** Recomputes totalCopies / availableCopies from the copy list and active loans. */
+const withCounts = (b: Book, issues: BookIssue[]): Book => {
+  const total = b.copies.filter(isLendable).length;
+  return { ...b, totalCopies: total, availableCopies: Math.max(0, total - copiesOnLoan(b.id, issues)) };
+};
 
-export const validateBookForm = (
-  v: BookFormValues,
-  books: Book[],
-  opts: { editingId?: string; minCopies?: number } = {},
-): BookFormErrors => {
+export const reconcileAvailability = (books: Book[], issues: BookIssue[]): Book[] =>
+  books.map((b) => withCounts(b, issues));
+
+/** Accession numbers of lendable copies not currently on loan. */
+export const availableCopyIds = (book: Book, issues: BookIssue[]): string[] => {
+  const taken = loanedCopyIds(book.id, issues);
+  return book.copies.filter((c) => isLendable(c) && !taken.has(c.accNo)).map((c) => c.accNo);
+};
+
+/** Identifies the copy being edited, so its own Book ID / ISBN don't count as duplicates. */
+export interface EditingCopy {
+  bookId: string;
+  accNo: string;
+}
+
+const ACC_NO = /^[A-Za-z0-9][A-Za-z0-9/-]*$/;
+const PRICE = /^[₹$€£]?\s?\d+(\.\d{1,2})?$/;
+
+export const validateBookForm = (v: BookFormValues, books: Book[], editing?: EditingCopy): BookFormErrors => {
   const errors: BookFormErrors = {};
+
+  const acc = v.accNo.trim();
+  if (!acc) errors.accNo = "Book ID is required.";
+  else if (acc.length > 20 || !ACC_NO.test(acc)) errors.accNo = "Use letters, numbers, - or / only (max 20).";
+  else {
+    const owner = books.find((b) =>
+      b.copies.some((c) => c.accNo.toLowerCase() === acc.toLowerCase() && !(b.id === editing?.bookId && c.accNo === editing.accNo)),
+    );
+    if (owner) errors.accNo = `Book ID ${acc} is already used by ${owner.title}.`;
+  }
+
   if (!v.title.trim()) errors.title = "Book title is required.";
   if (!v.author.trim()) errors.author = "Author is required.";
-  if (!v.category.trim()) errors.category = "Select a category.";
-
-  const copies = Number(v.totalCopies);
-  if (!v.totalCopies.trim()) errors.totalCopies = "Total copies is required.";
-  else if (!Number.isInteger(copies)) errors.totalCopies = "Enter a whole number.";
-  else if (copies <= 0) errors.totalCopies = "Copies must be at least 1.";
-  else if (copies > 9999) errors.totalCopies = "That seems too many — max 9999.";
-  else if (opts.minCopies && copies < opts.minCopies)
-    errors.totalCopies = `${opts.minCopies} cop${opts.minCopies === 1 ? "y is" : "ies are"} on loan — total can't be lower.`;
 
   if (v.isbn.trim()) {
     if (!isValidIsbn(v.isbn)) {
       errors.isbn = "Enter a valid ISBN-10 or ISBN-13 (check digit must match).";
     } else {
       const n = normalizeIsbn(v.isbn);
-      const dup = books.find(
-        (b) => b.id !== opts.editingId && b.isbn && normalizeIsbn(b.isbn) === n,
-      );
-      if (dup) errors.isbn = `ISBN already registered to ${dup.id} (${dup.title}).`;
+      const sameTitle = (b: Book) =>
+        b.id === editing?.bookId || (!editing && titleKey(b.title, b.author) === titleKey(v.title, v.author));
+      const dup = books.find((b) => !sameTitle(b) && b.isbn && normalizeIsbn(b.isbn) === n);
+      if (dup) errors.isbn = `ISBN already registered to ${dup.title}.`;
     }
   }
 
   if (v.publicationYear.trim()) {
     const y = Number(v.publicationYear);
     const max = new Date().getFullYear() + 1;
-    if (!Number.isInteger(y) || y < 1000 || y > max)
-      errors.publicationYear = `Enter a year between 1000 and ${max}.`;
+    if (!Number.isInteger(y) || y < 1000 || y > max) errors.publicationYear = `Enter a year between 1000 and ${max}.`;
   }
+
+  if (v.registerPage.trim().length > 10) errors.registerPage = "Keep the page reference to 10 characters.";
+  if (v.price.trim() && !PRICE.test(v.price.trim())) errors.price = "Enter an amount, e.g. 250 or 199.50.";
   return errors;
 };
 
-/** Generates the next temporary Book ID (BK-xxxx). */
+/** Generates the next internal title ID (BK-xxxx). */
 export const nextBookId = (books: Book[]): string => {
   const max = books.reduce((m, b) => {
     const n = Number(b.id.replace(/\D/g, ""));
@@ -107,92 +130,110 @@ export const nextBookId = (books: Book[]): string => {
   return `BK-${max + 1}`;
 };
 
-const formToFields = (v: BookFormValues) => ({
+/** Next accession number: one above the highest numeric one in the catalogue. */
+export const nextAccNo = (books: Book[]): number =>
+  books.reduce(
+    (m, b) => b.copies.reduce((mm, c) => (/^\d+$/.test(c.accNo) ? Math.max(mm, Number(c.accNo)) : mm), m),
+    1000,
+  ) + 1;
+
+const titleFields = (v: BookFormValues) => ({
   title: v.title.trim(),
   author: v.author.trim(),
   isbn: v.isbn.trim() || undefined,
-  category: v.category,
   publisher: v.publisher.trim() || undefined,
   edition: v.edition.trim() || undefined,
   publicationYear: v.publicationYear.trim() ? Number(v.publicationYear) : undefined,
-  totalCopies: Number(v.totalCopies),
-  shelfNumber: v.shelfNumber.trim() || undefined,
-  coverImage: v.coverImage || undefined,
 });
 
-export const createBook = (books: Book[], v: BookFormValues): { books: Book[]; book: Book } => {
-  const errors = validateBookForm(v, books);
+const copyFields = (v: BookFormValues) => ({
+  accNo: v.accNo.trim(),
+  shelf: v.shelfNumber.trim().toUpperCase() || undefined,
+  registerPage: v.registerPage.trim() || undefined,
+  price: v.price.trim() || undefined,
+});
+
+const fail = (errors: BookFormErrors) => {
   if (Object.keys(errors).length) throw new ServiceError("Please fix the highlighted fields.", errors);
-  const fields = formToFields(v);
+};
+
+/**
+ * Registers one physical copy. If a title with the same name and author exists,
+ * the copy is added to it (its blank details are filled in); otherwise a new title is created.
+ */
+export const registerCopy = (
+  books: Book[],
+  issues: BookIssue[],
+  v: BookFormValues,
+): { books: Book[]; book: Book; copy: BookCopy; newTitle: boolean } => {
+  fail(validateBookForm(v, books));
+  const fields = titleFields(v);
+  const copy: BookCopy = { ...copyFields(v), purchaseDate: todayISO(), addedAt: new Date().toISOString() };
+  const key = titleKey(fields.title, fields.author);
+  const existing = books.find((b) => titleKey(b.title, b.author) === key);
+
+  if (existing) {
+    const book = withCounts(
+      {
+        ...existing,
+        isbn: existing.isbn ?? fields.isbn,
+        publisher: existing.publisher ?? fields.publisher,
+        edition: existing.edition ?? fields.edition,
+        publicationYear: existing.publicationYear ?? fields.publicationYear,
+        shelfNumber: existing.shelfNumber ?? copy.shelf,
+        copies: [...existing.copies, copy],
+      },
+      issues,
+    );
+    return { books: books.map((b) => (b.id === book.id ? book : b)), book, copy, newTitle: false };
+  }
+
   const book: Book = {
     id: nextBookId(books),
     ...fields,
-    availableCopies: fields.totalCopies,
+    copies: [copy],
+    totalCopies: 1,
+    availableCopies: 1,
+    shelfNumber: copy.shelf,
     createdAt: todayISO(),
   };
-  return { books: [book, ...books], book };
+  return { books: [book, ...books], book, copy, newTitle: true };
 };
 
-export const updateBook = (
+/**
+ * Updates one copy. Title details (title, author, ISBN, publisher, edition, year) apply to
+ * every copy of the title; Book ID, shelf, page and price apply to this copy only.
+ * Renaming the Book ID also updates loans that point at it.
+ */
+export const updateCopy = (
   books: Book[],
   issues: BookIssue[],
-  id: string,
+  editing: EditingCopy,
   v: BookFormValues,
-): { books: Book[]; book: Book } => {
-  const existing = books.find((b) => b.id === id);
-  if (!existing) throw new ServiceError(`Book ${id} was not found.`);
-  const onLoan = copiesOnLoan(id, issues);
-  const errors = validateBookForm(v, books, { editingId: id, minCopies: onLoan });
-  if (Object.keys(errors).length) throw new ServiceError("Please fix the highlighted fields.", errors);
-  const fields = formToFields(v);
-  const book: Book = { ...existing, ...fields, availableCopies: fields.totalCopies - onLoan };
-  return { books: books.map((b) => (b.id === id ? book : b)), book };
-};
+): { books: Book[]; issues: BookIssue[]; book: Book; copy: BookCopy } => {
+  const existing = books.find((b) => b.id === editing.bookId);
+  const old = existing?.copies.find((c) => c.accNo === editing.accNo);
+  if (!existing || !old) throw new ServiceError(`Book ID ${editing.accNo} was not found.`);
+  fail(validateBookForm(v, books, editing));
 
-export const deleteBook = (books: Book[], issues: BookIssue[], id: string): Book[] => {
-  const onLoan = copiesOnLoan(id, issues);
-  if (onLoan > 0)
-    throw new ServiceError(
-      `This book has ${onLoan} cop${onLoan === 1 ? "y" : "ies"} on loan. Process the returns before deleting it.`,
-    );
-  return books.filter((b) => b.id !== id);
+  const copy: BookCopy = { ...old, ...copyFields(v) };
+  const nextIssues =
+    copy.accNo === old.accNo
+      ? issues
+      : issues.map((i) => (i.bookId === existing.id && i.bookCopyId === old.accNo ? { ...i, bookCopyId: copy.accNo } : i));
+  const book = withCounts(
+    { ...existing, ...titleFields(v), copies: existing.copies.map((c) => (c.accNo === old.accNo ? copy : c)) },
+    nextIssues,
+  );
+  return { books: books.map((b) => (b.id === book.id ? book : b)), issues: nextIssues, book, copy };
 };
 
 export type StockStatus = "available" | "low" | "out";
 
+/** Single-copy titles that are on the shelf count as available, not "low". */
 export const stockStatus = (b: Book): StockStatus =>
-  b.availableCopies <= 0 ? "out" : b.availableCopies <= LOW_STOCK_THRESHOLD ? "low" : "available";
-
-export const searchBooks = (
-  books: Book[],
-  q: { keyword: string; category: string; availability: AvailabilityFilter; sort: BookSortKey; dir: "asc" | "desc" },
-): Book[] => {
-  const kw = q.keyword.trim().toLowerCase();
-  const kwIsbn = normalizeIsbn(kw);
-  const out = books.filter((b) => {
-    if (q.category && b.category !== q.category) return false;
-    if (q.availability !== "all" && stockStatus(b) !== q.availability) return false;
-    if (!kw) return true;
-    return (
-      b.title.toLowerCase().includes(kw) ||
-      b.author.toLowerCase().includes(kw) ||
-      b.id.toLowerCase().includes(kw) ||
-      (!!b.isbn && !!kwIsbn && normalizeIsbn(b.isbn).toLowerCase().includes(kwIsbn.toLowerCase()))
-    );
-  });
-  const m = q.dir === "asc" ? 1 : -1;
-  return [...out].sort((a, b) => {
-    if (q.sort === "stock") return (a.availableCopies - b.availableCopies) * m || a.title.localeCompare(b.title);
-    return a[q.sort].localeCompare(b[q.sort]) * m;
-  });
-};
-
-/** Copy IDs (BK-1001-C01…) not currently on loan. */
-export const availableCopyIds = (book: Book, issues: BookIssue[]): string[] => {
-  const taken = new Set(
-    issues.filter((i) => i.bookId === book.id && i.status === "issued").map((i) => i.bookCopyId),
-  );
-  return Array.from({ length: book.totalCopies }, (_, i) => `${book.id}-C${String(i + 1).padStart(2, "0")}`).filter(
-    (c) => !taken.has(c),
-  );
-};
+  b.availableCopies <= 0
+    ? "out"
+    : b.availableCopies <= LOW_STOCK_THRESHOLD && b.totalCopies > LOW_STOCK_THRESHOLD
+      ? "low"
+      : "available";

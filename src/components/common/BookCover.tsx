@@ -12,9 +12,9 @@ const initials = (title: string) =>
     .map((w) => w[0].toUpperCase())
     .join("");
 
-/** Cover thumbnail, or a generated placeholder when no image was uploaded. */
-export const BookCover = ({ book, size = "sm" }: { book: Pick<Book, "title" | "coverImage">; size?: "sm" | "lg" }) => (
+/** Generated cover placeholder (initials on a colour derived from the title). */
+export const BookCover = ({ book, size = "sm" }: { book: Pick<Book, "title">; size?: "sm" | "lg" }) => (
   <Cover $hue={hueFor(book.title || "?")} $size={size} aria-hidden="true">
-    {book.coverImage ? <img src={book.coverImage} alt="" /> : initials(book.title || "?")}
+    {initials(book.title || "?")}
   </Cover>
 );

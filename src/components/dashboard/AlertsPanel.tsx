@@ -20,7 +20,7 @@ export const AlertsPanel = ({ books, issues, today, limit = 5 }: AlertsPanelProp
     .filter((i) => loanState(i, today) === "overdue")
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const lowStock = books
-    .filter((b) => stockStatus(b) !== "available")
+    .filter((b) => b.totalCopies > 0 && stockStatus(b) !== "available")
     .sort((a, b) => a.availableCopies - b.availableCopies || a.title.localeCompare(b.title));
   const titleOf = (id: string) => books.find((b) => b.id === id)?.title ?? id;
 
@@ -83,7 +83,7 @@ export const AlertsPanel = ({ books, issues, today, limit = 5 }: AlertsPanelProp
       )}
       {lowStock.length > limit && (
         <AllClear>
-          <ViewAll to="/books?availability=low">View all low-stock titles →</ViewAll>
+          +{lowStock.length - limit} more titles low or out of stock
         </AllClear>
       )}
     </Card>

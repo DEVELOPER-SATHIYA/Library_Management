@@ -132,6 +132,33 @@ export const SoonTag = styled.em`
   color: ${({ theme }) => theme.colors.sidebarMuted};
 `;
 
+export const SidebarFooter = styled.div`
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+`;
+
+export const LogoutButton = styled.button`
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: none;
+  border-radius: ${({ theme }) => theme.radius.md};
+  background: none;
+  color: ${({ theme }) => theme.colors.sidebarText};
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  > svg { flex-shrink: 0; opacity: 0.85; }
+
+  &:hover {
+    background: ${({ theme }) => theme.colors.sidebarHover};
+    color: #fff;
+  }
+`;
+
 /* ---------- Header ---------- */
 export const HeaderRoot = styled.header`
   position: sticky;

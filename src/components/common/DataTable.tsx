@@ -38,7 +38,13 @@ interface DataTableProps<T> {
   /** Reset to page 1 whenever this value changes (e.g. search/filter). */
   resetKey?: string;
   caption?: string;
+  /** Makes rows clickable (and keyboard-openable). Clicks on buttons, links or inputs inside a row are ignored. */
+  onRowClick?: (row: T) => void;
+  /** Accessible label for a clickable row, e.g. "View details of …". */
+  rowLabel?: (row: T) => string;
 }
+
+const INTERACTIVE = "button, a, input, select, textarea, label";
 
 /** Generic table with sortable headers and client-side pagination. */
 export function DataTable<T>({
@@ -52,6 +58,8 @@ export function DataTable<T>({
   highlightRow,
   resetKey,
   caption,
+  onRowClick,
+  rowLabel,
 }: DataTableProps<T>) {
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -100,7 +108,24 @@ export function DataTable<T>({
           </thead>
           <tbody>
             {visible.map((row) => (
-              <Tr key={rowKey(row)} $highlight={highlightRow?.(row)}>
+              <Tr
+                key={rowKey(row)}
+                $highlight={highlightRow?.(row)}
+                $clickable={!!onRowClick}
+                {...(onRowClick && {
+                  tabIndex: 0,
+                  "aria-label": rowLabel?.(row),
+                  onClick: (e: React.MouseEvent<HTMLTableRowElement>) => {
+                    if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
+                    onRowClick(row);
+                  },
+                  onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+                    e.preventDefault();
+                    onRowClick(row);
+                  },
+                })}
+              >
                 {columns.map((c) => (
                   <Td key={c.key} $align={c.align}>
                     {c.render(row)}

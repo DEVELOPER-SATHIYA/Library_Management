@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Book } from "../../types/book.types";
 import type { BookIssue } from "../../types/issue.types";
 import { loanState } from "../../services/issue.service";
-import { Button, IconButton, Mono, Muted } from "../../styles/ui";
+import { Button, Mono, Muted } from "../../styles/ui";
 import { formatDate } from "../../utils/date";
 import { LoanStatusBadge } from "../common/badges";
 import { DataTable, type Column } from "../common/DataTable";
@@ -104,7 +104,7 @@ export const IssuedBooksTable = ({
         return (
           <BookCell>
             <div>
-              <strong>{b?.title ?? <Muted>Deleted book</Muted>}</strong>
+              <strong>{b?.title ?? <Muted>Unknown book</Muted>}</strong>
               <small>{b?.author}</small>
             </div>
           </BookCell>
@@ -113,8 +113,14 @@ export const IssuedBooksTable = ({
     },
     {
       key: "copy",
-      header: "Book Copy ID",
+      header: "Book ID",
       render: (i) => (i.bookCopyId ? <Mono>{i.bookCopyId}</Mono> : <Muted>—</Muted>),
+    },
+    {
+      key: "page",
+      header: "Page",
+      align: "center",
+      render: (i) => bookOf(i.bookId)?.copies.find((c) => c.accNo === i.bookCopyId)?.registerPage ?? <Muted>—</Muted>,
     },
     {
       key: "issueDate",
@@ -147,9 +153,6 @@ export const IssuedBooksTable = ({
       align: "right",
       render: (i) => (
         <RowActions>
-          <IconButton type="button" title="View details" aria-label={`View ${i.id}`} onClick={() => onView(i)}>
-            <Icon name="eye" />
-          </IconButton>
           {i.status === "issued" && (
             <Button type="button" $size="sm" $variant="secondary" onClick={() => onReturn(i)}>
               <Icon name="return" />
@@ -172,6 +175,8 @@ export const IssuedBooksTable = ({
       resetKey={resetKey}
       pageSize={pageSize}
       highlightRow={(i) => loanState(i, today) === "overdue"}
+      onRowClick={onView}
+      rowLabel={(i) => `View details of ${i.id}`}
       caption="Issued books"
     />
   );

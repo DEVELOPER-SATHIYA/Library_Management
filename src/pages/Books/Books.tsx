@@ -1,137 +1,170 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useLibrary } from "../../context/LibraryContext";
-import { useToast } from "../../context/ToastContext";
-import { BOOK_CATEGORIES, type AvailabilityFilter, type Book, type BookSortKey } from "../../types/book.types";
-import { ServiceError, bookToForm, copiesOnLoan, searchBooks } from "../../services/book.service";
+import type { EditingCopy } from "../../services/book.service";
+import { filterCopies, listCopies } from "../../services/catalogue.service";
+import type { CatalogueCopy, CatalogueSortKey, CopyStatusFilter } from "../../types/catalogue.types";
 import { PageHeader } from "../../components/layout/PageHeader";
-import { BookTable } from "../../components/books/BookTable";
-import { BookDetails } from "../../components/books/BookDetails";
-import { BookForm } from "../../components/books/BookForm";
-import { SearchBar } from "../../components/common/SearchBar";
+import { EditCopyModal } from "../../components/books/EditCopyModal";
+import { CopyStatusBadge, CopyTitle } from "../../components/catalogue/CopyCells";
+import { CopyDetails } from "../../components/catalogue/CopyDetails";
+import { DataTable, type Column } from "../../components/common/DataTable";
 import { EmptyState } from "../../components/common/EmptyState";
-import { ConfirmDialog } from "../../components/common/ConfirmDialog";
-import { Modal } from "../../components/common/Modal";
 import { Icon } from "../../components/common/Icon";
-import { Button, Card, IconButton, Select, Toolbar } from "../../styles/ui";
-import { FilterSummary, SortSelect } from "./BooksStyles";
+import { SearchBar } from "../../components/common/SearchBar";
+import { Actions } from "../../components/books/books.styles";
+import { Button, Card, IconButton, Mono, Muted, Select, Toolbar } from "../../styles/ui";
+import { formatDate, todayISO } from "../../utils/date";
+import { downloadBlob } from "../../utils/xlsxWriter";
+import { exportCopiesXlsx } from "../../services/export.service";
+import { useToast } from "../../context/ToastContext";
+import { FilterSummary } from "./BooksStyles";
 
-const AVAILABILITY: { value: AvailabilityFilter; label: string }[] = [
-  { value: "all", label: "All availability" },
+const STATUS_FILTERS: { value: CopyStatusFilter; label: string }[] = [
+  { value: "all", label: "All statuses" },
   { value: "available", label: "Available" },
-  { value: "low", label: "Low stock" },
-  { value: "out", label: "Out of stock" },
+  { value: "issued", label: "Issued" },
+  { value: "unavailable", label: "Not available" },
 ];
 
+const isStatusFilter = (v: string | null): v is CopyStatusFilter => STATUS_FILTERS.some((s) => s.value === v);
+
+/** Admin view of every physical copy. Click a row for details; the only row action is Edit. */
 export const Books = () => {
-  const { books, issues, today, editBook, removeBook } = useLibrary();
+  const { books, issues } = useLibrary();
   const notify = useToast();
+  const [downloading, setDownloading] = useState(false);
   const navigate = useNavigate();
   const [params] = useSearchParams();
 
   const [keyword, setKeyword] = useState(params.get("search") ?? "");
-  const [category, setCategory] = useState(params.get("category") ?? "");
-  const [availability, setAvailability] = useState<AvailabilityFilter>(
-    (params.get("availability") as AvailabilityFilter) || "all",
-  );
-  const [sort, setSort] = useState<{ key: BookSortKey; dir: "asc" | "desc" }>({ key: "title", dir: "asc" });
+  const [status, setStatus] = useState<CopyStatusFilter>(() => {
+    const s = params.get("status");
+    return isStatusFilter(s) ? s : "all";
+  });
+  const [sort, setSort] = useState<{ key: CatalogueSortKey; dir: "asc" | "desc" }>({ key: "accNo", dir: "asc" });
 
-  const [viewingId, setViewingId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<Book | null>(null);
+  // Track by key so dialogs show live data after edits.
+  const [viewingAcc, setViewingAcc] = useState<string | null>(null);
+  const [editing, setEditing] = useState<EditingCopy | null>(null);
 
+  const copies = useMemo(() => listCopies(books, issues), [books, issues]);
   const rows = useMemo(
-    () => searchBooks(books, { keyword, category, availability, sort: sort.key, dir: sort.dir }),
-    [books, keyword, category, availability, sort],
+    () => filterCopies(copies, { keyword, status, sort: sort.key, dir: sort.dir, adminSearch: true }),
+    [copies, keyword, status, sort],
   );
+  const counts = useMemo(() => {
+    const c = { available: 0, issued: 0, unavailable: 0 };
+    rows.forEach((r) => c[r.status]++);
+    return c;
+  }, [rows]);
 
-  const totals = useMemo(
-    () => ({
-      copies: rows.reduce((s, b) => s + b.totalCopies, 0),
-      available: rows.reduce((s, b) => s + b.availableCopies, 0),
-    }),
-    [rows],
-  );
+  const viewing = viewingAcc ? copies.find((c) => c.accNo === viewingAcc) ?? null : null;
 
-  const viewing = viewingId ? books.find((b) => b.id === viewingId) ?? null : null;
-  const editing = editingId ? books.find((b) => b.id === editingId) ?? null : null;
-  const filtersActive = !!keyword || !!category || availability !== "all";
+  const filtersActive = !!keyword || status !== "all";
 
+  /** Exports exactly the rows matching the current search / status filter, in the current sort order. */
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const blob = await exportCopiesXlsx(rows);
+      const name = `all-books${filtersActive ? "-filtered" : ""}-${todayISO()}.xlsx`;
+      downloadBlob(blob, name);
+      notify("success", "Download ready", `${rows.length} book${rows.length === 1 ? "" : "s"} saved to ${name}.`);
+    } catch (e) {
+      notify("error", "Download failed", e instanceof Error ? e.message : undefined);
+    } finally {
+      setDownloading(false);
+    }
+  };
   const clearFilters = () => {
     setKeyword("");
-    setCategory("");
-    setAvailability("all");
+    setStatus("all");
   };
 
   const onSort = (key: string) =>
-    setSort((s) => ({ key: key as BookSortKey, dir: s.key === key && s.dir === "asc" ? "desc" : "asc" }));
+    setSort((s) => ({ key: key as CatalogueSortKey, dir: s.key === key && s.dir === "asc" ? "desc" : "asc" }));
 
-  const closeDelete = useCallback(() => setDeleting(null), []);
-  const confirmDelete = () => {
-    if (!deleting) return;
-    try {
-      removeBook(deleting.id);
-      notify("success", "Book deleted", `${deleting.title} (${deleting.id}) was removed from the catalogue.`);
-    } catch (e) {
-      notify("error", "Can't delete this book", e instanceof Error ? e.message : undefined);
-    }
-    setDeleting(null);
-  };
+  const closeDetails = useCallback(() => setViewingAcc(null), []);
+  const closeEdit = useCallback(() => setEditing(null), []);
 
-  const deletingOnLoan = deleting ? copiesOnLoan(deleting.id, issues) : 0;
+  const columns: Column<CatalogueCopy>[] = [
+    { key: "accNo", header: "Book ID", sortKey: "accNo", render: (c) => <Mono>{c.accNo}</Mono> },
+    { key: "page", header: "Page", align: "center", render: (c) => c.registerPage ?? <Muted>—</Muted> },
+    { key: "title", header: "Book Title", sortKey: "title", render: (c) => <CopyTitle copy={c} /> },
+    { key: "author", header: "Author", sortKey: "author", render: (c) => c.author || <Muted>—</Muted> },
+    { key: "shelf", header: "Shelf", render: (c) => (c.shelf ? <Mono>{c.shelf}</Mono> : <Muted>—</Muted>) },
+    { key: "price", header: "Price", align: "right", render: (c) => c.price ?? <Muted>—</Muted> },
+    {
+      key: "issuedTo",
+      header: "Issued To",
+      render: (c) =>
+        c.loan ? (
+          <div>
+            {c.loan.studentName}
+            <br />
+            <Muted>
+              <small>due {formatDate(c.loan.dueDate)}</small>
+            </Muted>
+          </div>
+        ) : (
+          <Muted>—</Muted>
+        ),
+    },
+    { key: "status", header: "Status", render: (c) => <CopyStatusBadge copy={c} showOverdue /> },
+    {
+      key: "actions",
+      header: "Actions",
+      align: "right",
+      render: (c) => (
+        <Actions>
+          <IconButton type="button" title="Edit book" aria-label={`Edit ${c.title}`} onClick={() => setEditing({ bookId: c.bookId, accNo: c.accNo })}>
+            <Icon name="edit" />
+          </IconButton>
+        </Actions>
+      ),
+    },
+  ];
 
   return (
     <>
       <PageHeader
         title="All Books"
-        description={`${books.length} titles · ${books.reduce((s, b) => s + b.totalCopies, 0)} copies in the catalogue`}
+        description={`${copies.length} copies · ${books.length} titles in the catalogue`}
         actions={
-          <Button type="button" onClick={() => navigate("/register-book")}>
-            <Icon name="plus" />
-            Register New Book
-          </Button>
+          <>
+            <Button
+              type="button"
+              $variant="secondary"
+              onClick={download}
+              disabled={downloading || rows.length === 0}
+              title={filtersActive ? "Download only the books matching the current filters" : "Download every book"}
+            >
+              <Icon name="download" />
+              {downloading ? "Preparing…" : filtersActive ? `Download filtered (${rows.length})` : "Download all"}
+            </Button>
+            <Button type="button" onClick={() => navigate("/register-book")}>
+              <Icon name="plus" />
+              Register New Book
+            </Button>
+          </>
         }
       />
 
       <Card>
         <Toolbar>
-          <SearchBar value={keyword} onChange={setKeyword} placeholder="Search title, author, ISBN or Book ID" />
-          <Select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
-            <option value="">All categories</option>
-            {BOOK_CATEGORIES.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </Select>
-          <Select
-            value={availability}
-            onChange={(e) => setAvailability(e.target.value as AvailabilityFilter)}
-            aria-label="Filter by availability"
-          >
-            {AVAILABILITY.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
+          <SearchBar
+            value={keyword}
+            onChange={setKeyword}
+            placeholder="Search title, author, Book ID, shelf, borrower or remarks"
+          />
+          <Select value={status} onChange={(e) => setStatus(e.target.value as CopyStatusFilter)} aria-label="Filter by status">
+            {STATUS_FILTERS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
               </option>
             ))}
           </Select>
-          <SortSelect>
-            <Select
-              value={sort.key}
-              onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as BookSortKey }))}
-              aria-label="Sort by"
-            >
-              <option value="title">Sort: Title</option>
-              <option value="author">Sort: Author</option>
-              <option value="stock">Sort: Available stock</option>
-            </Select>
-            <IconButton
-              type="button"
-              title={sort.dir === "asc" ? "Ascending" : "Descending"}
-              aria-label="Toggle sort direction"
-              onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
-            >
-              <Icon name={sort.dir === "asc" ? "arrowUp" : "arrowDown"} />
-            </IconButton>
-          </SortSelect>
           {filtersActive && (
             <Button type="button" $variant="ghost" $size="sm" onClick={clearFilters}>
               Clear filters
@@ -141,31 +174,36 @@ export const Books = () => {
 
         <FilterSummary>
           <span>
-            <strong>{rows.length}</strong> title{rows.length === 1 ? "" : "s"}
+            <strong>{rows.length}</strong> cop{rows.length === 1 ? "y" : "ies"}
           </span>
           <span>
-            <strong>{totals.copies}</strong> total copies
+            <strong>{counts.available}</strong> available
           </span>
           <span>
-            <strong>{totals.available}</strong> available
+            <strong>{counts.issued}</strong> issued
+          </span>
+          <span>
+            <strong>{counts.unavailable}</strong> not available
           </span>
         </FilterSummary>
 
-        <BookTable
-          books={rows}
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(c) => c.accNo}
           sort={sort}
           onSort={onSort}
-          onView={(b) => setViewingId(b.id)}
-          onEdit={(b) => setEditingId(b.id)}
-          onDelete={setDeleting}
-          resetKey={`${keyword}|${category}|${availability}|${sort.key}|${sort.dir}`}
+          resetKey={`${keyword}|${status}|${sort.key}|${sort.dir}`}
+          caption="Library copies"
+          onRowClick={(c) => setViewingAcc(c.accNo)}
+          rowLabel={(c) => `View details of ${c.title}, Book ID ${c.accNo}`}
           empty={
             <EmptyState
               icon="search"
               title={filtersActive ? "No books match your search" : "No books registered yet"}
               message={
                 filtersActive
-                  ? "Try a different keyword, or clear the category and availability filters."
+                  ? "Try a different keyword, or clear the status filter."
                   : "Register your first book to start building the catalogue."
               }
               action={
@@ -185,64 +223,16 @@ export const Books = () => {
         />
       </Card>
 
-      <BookDetails
-        book={viewing}
-        issues={issues}
-        today={today}
-        onClose={() => setViewingId(null)}
-        onEdit={(b) => {
-          setViewingId(null);
-          setEditingId(b.id);
+      <CopyDetails
+        copy={viewing}
+        onClose={closeDetails}
+        onEdit={(c) => {
+          setViewingAcc(null);
+          setEditing({ bookId: c.bookId, accNo: c.accNo });
         }}
       />
 
-      {editing && (
-        <Modal open width={760} title="Edit book" subtitle={`${editing.id} · ${editing.title}`} onClose={() => setEditingId(null)}>
-          <BookForm
-            key={editing.id}
-            initialValues={bookToForm(editing)}
-            books={books}
-            bookId={editing.id}
-            editingId={editing.id}
-            minCopies={copiesOnLoan(editing.id, issues)}
-            submitLabel="Save changes"
-            showReset={false}
-            onCancel={() => setEditingId(null)}
-            onSubmit={(values) => {
-              try {
-                const updated = editBook(editing.id, values);
-                notify("success", "Book updated", `${updated.title} has been saved.`);
-                setEditingId(null);
-              } catch (e) {
-                if (e instanceof ServiceError && e.fieldErrors) return e.fieldErrors;
-                notify("error", "Update failed", e instanceof Error ? e.message : undefined);
-              }
-            }}
-          />
-        </Modal>
-      )}
-
-      <ConfirmDialog
-        open={!!deleting}
-        title={deletingOnLoan ? "Book is on loan" : "Delete this book?"}
-        tone={deletingOnLoan ? "warning" : "danger"}
-        confirmLabel={deletingOnLoan ? "OK" : "Delete book"}
-        message={
-          deletingOnLoan ? (
-            <p>
-              <strong>{deleting?.title}</strong> has {deletingOnLoan} cop{deletingOnLoan === 1 ? "y" : "ies"} on loan.
-              Process the returns before deleting this record.
-            </p>
-          ) : (
-            <p>
-              <strong>{deleting?.title}</strong> ({deleting?.id}) and all {deleting?.totalCopies} copies will be
-              removed from the catalogue. This can't be undone.
-            </p>
-          )
-        }
-        onCancel={closeDelete}
-        onConfirm={deletingOnLoan ? closeDelete : confirmDelete}
-      />
+      <EditCopyModal target={editing} onClose={closeEdit} />
     </>
   );
 };

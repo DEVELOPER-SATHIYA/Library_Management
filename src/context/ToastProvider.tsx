@@ -1,18 +1,6 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { ToastViewport } from "../components/common/Toast";
-
-export type ToastTone = "success" | "error" | "warning" | "info";
-
-export interface ToastItem {
-  id: number;
-  tone: ToastTone;
-  title: string;
-  message?: string;
-}
-
-type Notify = (tone: ToastTone, title: string, message?: string) => void;
-
-const ToastContext = createContext<Notify | null>(null);
+import { ToastContext, type Notify, type ToastItem } from "./ToastContext";
 
 let counter = 0;
 
@@ -37,10 +25,4 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </ToastContext.Provider>
   );
-};
-
-export const useToast = (): Notify => {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error("useToast must be used inside <ToastProvider>");
-  return ctx;
 };

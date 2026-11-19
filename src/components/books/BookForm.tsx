@@ -1,6 +1,6 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { BOOK_CATEGORIES, type Book, type BookFormErrors, type BookFormValues } from "../../types/book.types";
-import { validateBookForm } from "../../services/book.service";
+import type { Book, BookFormErrors, BookFormValues } from "../../types/book.types";
+import { validateBookForm, type EditingCopy } from "../../services/book.service";
 import {
   Button,
   Field,
@@ -13,22 +13,14 @@ import {
   Label,
   Required,
   SectionHint,
-  Select,
 } from "../../styles/ui";
 import { Icon } from "../common/Icon";
-import { CoverPreview, CoverUpload, FileLabel, IdPreview } from "./books.styles";
-
-const MAX_COVER_BYTES = 2 * 1024 * 1024;
 
 interface BookFormProps {
   initialValues: BookFormValues;
   books: Book[];
-  /** Book ID shown read-only (temporary ID for new records, real ID when editing). */
-  bookId: string;
-  idHint?: string;
-  editingId?: string;
-  /** Minimum allowed total copies (copies already on loan). */
-  minCopies?: number;
+  /** The copy being edited (omit when registering a new one). */
+  editing?: EditingCopy;
   submitLabel: string;
   /** Return field errors from the service to display them, or nothing on success. */
   onSubmit: (values: BookFormValues) => BookFormErrors | void;
@@ -38,14 +30,11 @@ interface BookFormProps {
   showReset?: boolean;
 }
 
-/** Grouped register / edit form with inline validation. */
+/** Register / edit form for one physical book, with inline validation. */
 export const BookForm = ({
   initialValues,
   books,
-  bookId,
-  idHint,
-  editingId,
-  minCopies,
+  editing,
   submitLabel,
   onSubmit,
   onCancel,
@@ -59,34 +48,18 @@ export const BookForm = ({
   // untouched field doesn't jump the layout on blur.
   const [dirty, setDirty] = useState<Partial<Record<keyof BookFormValues, boolean>>>({});
   const [serverErrors, setServerErrors] = useState<BookFormErrors>({});
-  const [coverError, setCoverError] = useState("");
 
-  const liveErrors = useMemo(
-    () => validateBookForm(values, books, { editingId, minCopies }),
-    [values, books, editingId, minCopies],
-  );
+  const liveErrors = useMemo(() => validateBookForm(values, books, editing), [values, books, editing]);
 
   const errorFor = (k: keyof BookFormValues) =>
     serverErrors[k] ?? ((touched[k] || submitted) && liveErrors[k] ? liveErrors[k] : undefined);
 
-  const set = (k: keyof BookFormValues) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const set = (k: keyof BookFormValues) => (e: ChangeEvent<HTMLInputElement>) => {
     setValues((v) => ({ ...v, [k]: e.target.value }));
     setDirty((d) => ({ ...d, [k]: true }));
     setServerErrors((s) => ({ ...s, [k]: undefined }));
   };
   const blur = (k: keyof BookFormValues) => () => dirty[k] && setTouched((t) => ({ ...t, [k]: true }));
-
-  const onCover = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return setCoverError("Please choose an image file.");
-    if (file.size > MAX_COVER_BYTES) return setCoverError("Image must be 2 MB or smaller.");
-    setCoverError("");
-    const reader = new FileReader();
-    reader.onload = () => setValues((v) => ({ ...v, coverImage: String(reader.result) }));
-    reader.readAsDataURL(file);
-  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -106,7 +79,6 @@ export const BookForm = ({
     setDirty({});
     setSubmitted(false);
     setServerErrors({});
-    setCoverError("");
   };
 
   const input = (k: keyof BookFormValues, props: Record<string, unknown> = {}) => (
@@ -129,53 +101,35 @@ export const BookForm = ({
         <legend>Book information</legend>
         <SectionHint>Fields marked with * are required.</SectionHint>
         <FormGrid>
-          <Field $span={2}>
-            <Label htmlFor="book-title">
-              Book Title<Required>*</Required>
-            </Label>
-            {input("title", { placeholder: "e.g. Introduction to Algorithms", autoFocus: !editingId })}
-            {err("title")}
-          </Field>
           <Field>
-            <Label htmlFor="book-author">
-              Author<Required>*</Required>
+            <Label htmlFor="book-accNo">
+              Book ID<Required>*</Required>
             </Label>
-            {input("author", { placeholder: "e.g. Thomas H. Cormen" })}
-            {err("author")}
+            {input("accNo", { placeholder: "e.g. 39001", autoComplete: "off" })}
+            {errorFor("accNo") ? (
+              err("accNo")
+            ) : (
+              <FieldHint>{editing ? "Accession number of this copy" : "Next free number suggested — you can change it"}</FieldHint>
+            )}
           </Field>
-          <Field>
-            <Label htmlFor="book-category">
-              Category<Required>*</Required>
-            </Label>
-            <Select
-              id="book-category"
-              value={values.category}
-              onChange={set("category")}
-              onBlur={blur("category")}
-              $invalid={!!errorFor("category")}
-            >
-              <option value="">Select a category</option>
-              {BOOK_CATEGORIES.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </Select>
-            {err("category")}
-          </Field>
-        </FormGrid>
-      </FormSection>
-
-      <FormSection>
-        <legend>Identification</legend>
-        <FormGrid>
           <Field>
             <Label htmlFor="book-isbn">ISBN</Label>
             {input("isbn", { placeholder: "978-0-262-04630-5", inputMode: "numeric" })}
             {errorFor("isbn") ? err("isbn") : <FieldHint>Optional · ISBN-10 or ISBN-13, hyphens allowed</FieldHint>}
           </Field>
-          <Field>
-            <Label as="span">Book ID</Label>
-            <IdPreview>{bookId}</IdPreview>
-            {idHint && <FieldHint>{idHint}</FieldHint>}
+          <Field $span={2}>
+            <Label htmlFor="book-title">
+              Book Title<Required>*</Required>
+            </Label>
+            {input("title", { placeholder: "e.g. Introduction to Algorithms" })}
+            {err("title")}
+          </Field>
+          <Field $span={2}>
+            <Label htmlFor="book-author">
+              Author<Required>*</Required>
+            </Label>
+            {input("author", { placeholder: "e.g. Thomas H. Cormen" })}
+            {err("author")}
           </Field>
         </FormGrid>
       </FormSection>
@@ -200,46 +154,23 @@ export const BookForm = ({
       </FormSection>
 
       <FormSection>
-        <legend>Inventory</legend>
-        <FormGrid>
-          <Field>
-            <Label htmlFor="book-totalCopies">
-              Total Copies<Required>*</Required>
-            </Label>
-            {input("totalCopies", { type: "number", min: Math.max(1, minCopies ?? 1), step: 1 })}
-            {errorFor("totalCopies")
-              ? err("totalCopies")
-              : minCopies
-                ? <FieldHint>{minCopies} currently on loan</FieldHint>
-                : null}
-          </Field>
+        <legend>Register &amp; shelf</legend>
+        <FormGrid $cols={3}>
           <Field>
             <Label htmlFor="book-shelfNumber">Shelf / Rack Number</Label>
-            {input("shelfNumber", { placeholder: "e.g. T-01-A" })}
+            {input("shelfNumber", { placeholder: "e.g. CWA3-1" })}
+          </Field>
+          <Field>
+            <Label htmlFor="book-registerPage">Page</Label>
+            {input("registerPage", { placeholder: "e.g. 12", maxLength: 10 })}
+            {errorFor("registerPage") ? err("registerPage") : <FieldHint>Page in the librarian's register</FieldHint>}
+          </Field>
+          <Field>
+            <Label htmlFor="book-price">Price</Label>
+            {input("price", { placeholder: "e.g. 250", inputMode: "decimal" })}
+            {err("price")}
           </Field>
         </FormGrid>
-      </FormSection>
-
-      <FormSection>
-        <legend>Cover image</legend>
-        <CoverUpload>
-          <CoverPreview>
-            {values.coverImage ? <img src={values.coverImage} alt="Cover preview" /> : <Icon name="image" size={24} />}
-          </CoverPreview>
-          <div>
-            <FileLabel>
-              <Icon name="image" size={16} />
-              {values.coverImage ? "Change image" : "Upload image"}
-              <input type="file" accept="image/*" onChange={onCover} />
-            </FileLabel>
-            {values.coverImage && (
-              <Button type="button" $variant="ghost" $size="sm" onClick={() => setValues((v) => ({ ...v, coverImage: "" }))}>
-                Remove
-              </Button>
-            )}
-            <div>{coverError ? <FieldError>{coverError}</FieldError> : <FieldHint>Optional · JPG or PNG, up to 2 MB</FieldHint>}</div>
-          </div>
-        </CoverUpload>
       </FormSection>
 
       <FormActions>

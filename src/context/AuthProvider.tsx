@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { AuthContext } from "./AuthContext";
 
 /**
  * UI-only admin gate. The credentials live in the bundle, so this hides the
@@ -8,15 +9,6 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 const ADMIN_EMAIL = "admin@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
 const STORAGE_KEY = "library.admin";
-
-interface AuthContextValue {
-  isAdmin: boolean;
-  /** Returns true when the credentials are correct. */
-  login: (email: string, password: string) => boolean;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 const readSession = (): boolean => {
   try {
@@ -55,10 +47,4 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const value = useMemo(() => ({ isAdmin, login, logout }), [isAdmin, login, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-export const useAuth = (): AuthContextValue => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
-  return ctx;
 };
